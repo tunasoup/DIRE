@@ -1,6 +1,10 @@
+from datetime import datetime
 from pathlib import Path
 
+import cv2
+import numpy as np
 import torch
+from PIL import Image
 from torchvision import transforms
 
 from .guided_diffusion.guided_diffusion.script_util import create_model_and_diffusion, model_and_diffusion_defaults
@@ -23,9 +27,9 @@ class Diffuser:
 
     def get_dire(self, img_batch: torch.Tensor) -> torch.Tensor:
         batch_size = img_batch.shape[0]
-
         reverse_fn = self._diffusion.ddim_reverse_sample_loop
-        imgs = reshape_image(img_batch, self._image_size)
+
+        imgs = preprocess_images(img_batch, self._image_size)
 
         latent = reverse_fn(
             self._model,
@@ -90,13 +94,33 @@ def setup_diffuser(weights_path: Path):
     return Diffuser(model, diffusion, **settings)
 
 
-def reshape_image(imgs: torch.Tensor, image_size: int) -> torch.Tensor:
-    if len(imgs.shape) == 3:
-        imgs = imgs.unsqueeze(0)
-    if imgs.shape[2] != imgs.shape[3]:
-        crop_func = transforms.CenterCrop(image_size)
-        imgs = crop_func(imgs)
-    if imgs.shape[2] != image_size:
-        imgs = torch.nn.functional.interpolate(imgs, size=(image_size, image_size), mode="bicubic")
+def preprocess_images(img_batch: torch.Tensor, image_size: int) -> torch.Tensor:
+    # Replicate the preprocessing of the original code
+    imgs = torch.zeros([*img_batch.shape[:2], image_size, image_size],
+                       device=img_batch.device)
+
+    for idx, img in enumerate(img_batch):
+        img = transforms.ToPILImage()(img)
+        img = center_crop_arr(img, image_size)
+        img = img.astype(np.float32) / 127.5 - 1
+        img = torch.from_numpy(np.transpose(img, [2, 0, 1]))
+        imgs[idx] = img
+
     return imgs
 
+
+def center_crop_arr(pil_image, image_size):
+    # Copied from the original code to avoid irrelevant dependencies:
+    # We are not on a new enough PIL to support the `reducing_gap`
+    # argument, which uses BOX downsampling at powers of two first.
+    # Thus, we do it by hand to improve downsample quality.
+    while min(*pil_image.size) >= 2 * image_size:
+        pil_image = pil_image.resize(tuple(x // 2 for x in pil_image.size), resample=Image.BOX)
+
+    scale = image_size / min(*pil_image.size)
+    pil_image = pil_image.resize(tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC)
+
+    arr = np.array(pil_image)
+    crop_y = (arr.shape[0] - image_size) // 2
+    crop_x = (arr.shape[1] - image_size) // 2
+    return arr[crop_y:crop_y + image_size, crop_x:crop_x + image_size]
