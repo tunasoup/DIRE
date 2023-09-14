@@ -4,28 +4,21 @@ Modified from guided-diffusion/scripts/image_sample.py
 
 import argparse
 import os
-import torch
 
-import sys
 import cv2
-from mpi4py import MPI
-
+import numpy as np
+import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 
-import numpy as np
-import torch as th
-import torch.distributed as dist
-
-from guided_diffusion import dist_util, logger
+from guided_diffusion import logger
+# from guided_diffusion import dist_util
 from guided_diffusion.image_datasets import load_data_for_reverse
-from guided_diffusion.script_util import (
-    NUM_CLASSES,
-    model_and_diffusion_defaults,
-    create_model_and_diffusion,
-    add_dict_to_argparser,
-    args_to_dict,
-)
+from guided_diffusion.script_util import (NUM_CLASSES, add_dict_to_argparser, args_to_dict, create_model_and_diffusion,
+                                          model_and_diffusion_defaults)
+
+
+# from mpi4py import MPI
 
 
 def reshape_image(imgs: torch.Tensor, image_size: int) -> torch.Tensor:
@@ -42,7 +35,7 @@ def reshape_image(imgs: torch.Tensor, image_size: int) -> torch.Tensor:
 def main():
     args = create_argparser().parse_args()
 
-    dist_util.setup_dist(os.environ["CUDA_VISIBLE_DEVICES"])
+    # dist_util.setup_dist(os.environ["CUDA_VISIBLE_DEVICES"])
     logger.configure(dir=args.recons_dir)
 
     os.makedirs(args.recons_dir, exist_ok=True)
@@ -50,8 +43,12 @@ def main():
     logger.log(str(args))
 
     model, diffusion = create_model_and_diffusion(**args_to_dict(args, model_and_diffusion_defaults().keys()))
-    model.load_state_dict(dist_util.load_state_dict(args.model_path, map_location="cpu"))
-    model.to(dist_util.dev())
+    from pathlib import Path
+    print(Path(args.model_path).absolute())
+    sd = torch.load(args.model_path, map_location="cpu")
+
+    model.load_state_dict(sd)
+    model.to("cuda")
     logger.log("have created model and diffusion")
     if args.use_fp16:
         model.convert_to_fp16()
@@ -64,23 +61,27 @@ def main():
 
     logger.log("computing recons & DIRE ...")
     have_finished_images = 0
-    while have_finished_images < args.num_samples:
-        if (have_finished_images + MPI.COMM_WORLD.size * args.batch_size) > args.num_samples and (
-            args.num_samples - have_finished_images
-        ) % MPI.COMM_WORLD.size == 0:
-            batch_size = (args.num_samples - have_finished_images) // MPI.COMM_WORLD.size
-        else:
-            batch_size = args.batch_size
+    # while have_finished_images < args.num_samples:
+    #     if (have_finished_images + MPI.COMM_WORLD.size * args.batch_size) > args.num_samples and (
+    #         args.num_samples - have_finished_images
+    #     ) % MPI.COMM_WORLD.size == 0:
+    #         batch_size = (args.num_samples - have_finished_images) // MPI.COMM_WORLD.size
+    #     else:
+    #         batch_size = args.batch_size
+
+    # Only works for 1 batch
+    for _ in range(1):
+        batch_size = args.batch_size
         all_images = []
         all_labels = []
         imgs, out_dicts, paths = next(data)
         imgs = imgs[:batch_size]
         paths = paths[:batch_size]
 
-        imgs = imgs.to(dist_util.dev())
+        imgs = imgs.to("cuda")
         model_kwargs = {}
         if args.class_cond:
-            classes = th.randint(low=0, high=NUM_CLASSES, size=(batch_size,), device=dist_util.dev())
+            classes = torch.randint(low=0, high=NUM_CLASSES, size=(batch_size,), device="cuda")
             model_kwargs["y"] = classes
         reverse_fn = diffusion.ddim_reverse_sample_loop
         imgs = reshape_image(imgs, args.image_size)
@@ -103,28 +104,28 @@ def main():
             real_step=args.real_step,
         )
 
-        dire = th.abs(imgs - recons)
-        recons = ((recons + 1) * 127.5).clamp(0, 255).to(th.uint8)
+        dire = torch.abs(imgs - recons)
+        recons = ((recons + 1) * 127.5).clamp(0, 255).to(torch.uint8)
         recons = recons.permute(0, 2, 3, 1)
         recons = recons.contiguous()
 
-        imgs = ((imgs + 1) * 127.5).clamp(0, 255).to(th.uint8)
+        imgs = ((imgs + 1) * 127.5).clamp(0, 255).to(torch.uint8)
         imgs = imgs.permute(0, 2, 3, 1)
         imgs = imgs.contiguous()
 
-        dire = (dire * 255.0 / 2.0).clamp(0, 255).to(th.uint8)
+        dire = (dire * 255.0 / 2.0).clamp(0, 255).to(torch.uint8)
         dire = dire.permute(0, 2, 3, 1)
         dire = dire.contiguous()
 
-        gathered_samples = [th.zeros_like(recons) for _ in range(dist.get_world_size())]
-        dist.all_gather(gathered_samples, recons)  # gather not supported with NCCL
-
-        all_images.extend([sample.cpu().numpy() for sample in gathered_samples])
-        if args.class_cond:
-            gathered_labels = [th.zeros_like(classes) for _ in range(dist.get_world_size())]
-            dist.all_gather(gathered_labels, classes)
-            all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
-        have_finished_images += len(all_images) * batch_size
+        # gathered_samples = [th.zeros_like(recons) for _ in range(dist.get_world_size())]
+        # dist.all_gather(gathered_samples, recons)  # gather not supported with NCCL
+        #
+        # all_images.extend([sample.cpu().numpy() for sample in gathered_samples])
+        # if args.class_cond:
+        #     gathered_labels = [th.zeros_like(classes) for _ in range(dist.get_world_size())]
+        #     dist.all_gather(gathered_labels, classes)
+        #     all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
+        # have_finished_images += len(all_images) * batch_size
         # print(th.mean(res.float()))
         recons = recons.cpu().numpy()
         for i in range(len(recons)):
@@ -143,7 +144,7 @@ def main():
             cv2.imwrite(f"{recons_save_dir}/{fn_save}", cv2.cvtColor(recons[i].astype(np.uint8), cv2.COLOR_RGB2BGR))
         logger.log(f"have finished {have_finished_images} samples")
 
-    dist.barrier()
+    # dist.barrier()
     logger.log("finish computing recons & DIRE!")
 
 
