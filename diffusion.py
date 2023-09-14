@@ -1,12 +1,11 @@
-from datetime import datetime
 from pathlib import Path
 
-import cv2
 import numpy as np
 import torch
 from PIL import Image
 from torchvision import transforms
 
+from dataset import jpeg_compression
 from .guided_diffusion.guided_diffusion.script_util import create_model_and_diffusion, model_and_diffusion_defaults
 
 
@@ -21,16 +20,19 @@ class Diffuser:
         self._real_step = 0
         self._model_kwargs = None
         self._clip_denoised = True
+        self._compress_dire = True  # In the original code this is derived from input image extension
 
         if kwargs["use_fp16"]:
             model.convert_to_fp16()
 
     def get_dire(self, img_batch: torch.Tensor) -> torch.Tensor:
+        # Calculate the diffusion reconstruction error for a batch of images
         batch_size = img_batch.shape[0]
         reverse_fn = self._diffusion.ddim_reverse_sample_loop
 
         imgs = preprocess_images(img_batch, self._image_size)
 
+        # Batch size affects the results
         latent = reverse_fn(
             self._model,
             (batch_size, 3, self._image_size, self._image_size),
@@ -53,16 +55,21 @@ class Diffuser:
 
         dire = torch.abs(imgs - recons)
 
-        # Save example images, overwrites each other, meant for debugging
-        # from torchvision.utils import save_image
-        # dir_out = Path("samples")
-        # dir_out.mkdir(exist_ok=True, parents=True)
-        # for idx in range(batch_size):
-        #     save_image(imgs[idx].cpu(), dir_out.joinpath(f"{idx}_a.png"))
-        #     save_image(recons[idx].cpu(), dir_out.joinpath(f"{idx}_b.png"))
-        #     save_image(dire[idx].cpu(), dir_out.joinpath(f"{idx}_c.png"))
+        # Replicate the postprocessing of the original code without saving images
+        # and automatically inferring the jpg or png extension
+        dire_out = torch.zeros([*dire.shape], device=dire.device)
+        dire = (dire * 255.0 / 2.0).clamp(0, 255).to(torch.uint8)
+        for i, dire_i in enumerate(dire):
+            dire_out_i = transforms.ToPILImage()(dire_i)
+            if self._compress_dire:
+                # cv2 uses jpeg compression with quality factor 95 by default in the original code
+                dire_out_i = jpeg_compression(dire_out_i, quality=95)
+            dire_out[i] = transforms.ToTensor()(dire_out_i)
 
-        return dire
+        # Save example images, overwrites each other, meant for debugging
+        # save_examples(Path("samples"), imgs, recons, dire_out)
+
+        return dire_out
 
     def to(self, device):
         self._model.to(device)
@@ -92,6 +99,18 @@ def setup_diffuser(weights_path: Path):
     model.load_state_dict(state_dict)
     model.eval()
     return Diffuser(model, diffusion, **settings)
+
+
+def save_examples(dir_out: Path, imgs: torch.Tensor, recons: torch.Tensor, dire: torch.Tensor) -> None:
+    # Save a batch of preprocessed images, reconstructions, and dires
+    batch_size = imgs.shape[0]
+    dir_out.mkdir(exist_ok=True, parents=True)
+    imgs = ((imgs + 1) * 127.5).clamp(0, 255).to(torch.uint8)
+    recons = ((recons + 1) * 127.5).clamp(0, 255).to(torch.uint8)
+    for idx in range(batch_size):
+        (transforms.ToPILImage()(dire[idx])).save(dir_out.joinpath(f"{idx}_dire.png"))
+        (transforms.ToPILImage()(recons[idx].cpu())).save(dir_out.joinpath(f"{idx}_rec.png"))
+        (transforms.ToPILImage()(imgs[idx].cpu())).save(dir_out.joinpath(f"{idx}_img.png"))
 
 
 def preprocess_images(img_batch: torch.Tensor, image_size: int) -> torch.Tensor:
