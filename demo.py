@@ -1,15 +1,15 @@
 import argparse
 import glob
 import os
+from pathlib import Path
 
-import torch
 import torch.nn
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 from PIL import Image
 from tqdm import tqdm
 
-from utils.utils import get_network, str2bool, to_cuda
+from utils.utils import get_network, str2bool
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument(
@@ -55,7 +55,7 @@ trans = transforms.Compose(
         transforms.ToTensor(),
     )
 )
-for img_path in tqdm(file_list, dynamic_ncols=True, disable=len(file_list) <= 1):
+for img_path in tqdm(file_list, dynamic_ncols=True, disable=len(file_list) <= 10):
     img = Image.open(img_path).convert("RGB")
     img = trans(img)
     if args.aug_norm:
@@ -66,4 +66,4 @@ for img_path in tqdm(file_list, dynamic_ncols=True, disable=len(file_list) <= 1)
 
     with torch.no_grad():
         prob = model(in_tens).sigmoid().item()
-    print(f"Prob of being synthetic: {prob:.4f}")
+    print(f"Prob of {Path(img_path).name} being synthetic: {prob}")
