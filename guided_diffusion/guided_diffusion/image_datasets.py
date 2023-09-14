@@ -1,14 +1,15 @@
 import math
-import os
 import random
 
-from PIL import Image
 import blobfile as bf
-from mpi4py import MPI
+# from mpi4py import MPI
 import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader, Dataset
-from guided_diffusion import logger
+
+
+# from guided_diffusion import logger
 
 
 def load_data_for_reverse(
@@ -39,16 +40,17 @@ def load_data_for_reverse(
     :param random_crop: if True, randomly crop the images for augmentation.
     :param random_flip: if True, randomly flip the images for augmentation.
     """
-    if not data_dir:
-        raise ValueError("unspecified data directory")
-    if MPI.COMM_WORLD.Get_rank() == 0:
-        all_files = _list_image_files_recursively(data_dir)
-
-    if MPI.COMM_WORLD.Get_rank() == 0:
-        MPI.COMM_WORLD.bcast(all_files)
-    else:
-        all_files = MPI.COMM_WORLD.bcast(None)
-
+    # if not data_dir:
+    #     raise ValueError("unspecified data directory")
+    # if MPI.COMM_WORLD.Get_rank() == 0:
+    #     all_files = _list_image_files_recursively(data_dir)
+    #
+    # if MPI.COMM_WORLD.Get_rank() == 0:
+    #     MPI.COMM_WORLD.bcast(all_files)
+    # else:
+    #     all_files = MPI.COMM_WORLD.bcast(None)
+    from pathlib import Path
+    all_files = [str(path) for path in Path(data_dir).iterdir()]
     classes = None
     if class_cond:
         # Assume classes are the first part of the filename,
@@ -60,12 +62,12 @@ def load_data_for_reverse(
         image_size,
         all_files,
         classes=classes,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
+        #shard=MPI.COMM_WORLD.Get_rank(),
+        #num_shards=MPI.COMM_WORLD.Get_size(),
         random_crop=random_crop,
         random_flip=random_flip,
     )
-    logger.log("dataset length: {}".format(dataset.__len__() * MPI.COMM_WORLD.size))
+    # logger.log("dataset length: {}".format(dataset.__len__() * MPI.COMM_WORLD.size))
     if deterministic:
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=False)
     else:
@@ -116,8 +118,8 @@ def load_data(
         image_size,
         all_files,
         classes=classes,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
+        # shard=MPI.COMM_WORLD.Get_rank(),
+        # num_shards=MPI.COMM_WORLD.Get_size(),
         random_crop=random_crop,
         random_flip=random_flip,
     )
