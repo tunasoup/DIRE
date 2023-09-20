@@ -69,8 +69,8 @@ def main():
     #     else:
     #         batch_size = args.batch_size
 
-    # Only works for 1 batch
-    for _ in range(1):
+    # Forces a batch size of 1
+    for _ in range(args.num_samples):
         batch_size = args.batch_size
         all_images = []
         all_labels = []
@@ -142,6 +142,7 @@ def main():
                 f"{dire_save_dir}/{fn_save}", cv2.cvtColor(dire[i].cpu().numpy().astype(np.uint8), cv2.COLOR_RGB2BGR)
             )
             cv2.imwrite(f"{recons_save_dir}/{fn_save}", cv2.cvtColor(recons[i].astype(np.uint8), cv2.COLOR_RGB2BGR))
+        have_finished_images += 1
         logger.log(f"have finished {have_finished_images} samples")
 
     # dist.barrier()
