@@ -18,11 +18,12 @@ class Detector(torch.nn.Module):
         ])
 
         self._model = resnet50(num_classes=1)
-        self._diffuser = setup_diffuser(Path("weights", "DIRE", "256x256_diffusion_uncond.pt"))
+        self._diffuser = None
 
     def load_pretrained(self, weights_path: Path) -> None:
         state_dict = torch.load(weights_path, map_location='cpu')
         self._model.load_state_dict(state_dict['model'])
+        self._diffuser = setup_diffuser(weights_path.parent.joinpath("256x256_diffusion_uncond.pt"))
 
     def configure(self, device: Optional[str], training: Optional[bool] = None, **kwargs) -> None:
         if device is not None:
